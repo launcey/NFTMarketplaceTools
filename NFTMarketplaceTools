@@ -1,0 +1,104 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
+import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+
+contract NFTMarketplaceTools is Ownable, IERC721Receiver {
+    using EnumerableSet for EnumerableSet.UintSet;
+
+    struct Listing {
+        address seller;
+        uint256 tokenId;
+        uint256 price; // Price in wei
+    }
+
+    // ERC721 NFT contract address
+    address public nftContract;
+
+    // Mapping from token ID to Listing
+    mapping(uint256 => Listing) public listings;
+
+    // Set of all listed token IDs
+    EnumerableSet.UintSet private listedTokens;
+
+    // Events
+    event NFTListed(address indexed seller, uint256 indexed tokenId, uint256 price);
+    event NFTUnlisted(address indexed seller, uint256 indexed tokenId);
+    event NFTSold(address indexed seller, address indexed buyer, uint256 indexed tokenId, uint256 price);
+
+    constructor(address _nftContract) {
+        nftContract = _nftContract;
+    }
+
+    // List an NFT for sale
+    function listNFT(uint256 tokenId, uint256 price) external {
+        require(IERC721(nftContract).ownerOf(tokenId) == msg.sender, "Not the owner of the NFT");
+        require(price > 0, "Price must be greater than zero");
+        require(!listedTokens.contains(tokenId), "NFT already listed");
+
+        listings[tokenId] = Listing({
+            seller: msg.sender,
+            tokenId: tokenId,
+            price: price
+        });
+
+        listedTokens.add(tokenId);
+
+        emit NFTListed(msg.sender, tokenId, price);
+    }
+
+    // Unlist an NFT from sale
+    function unlistNFT(uint256 tokenId) external {
+        require(listedTokens.contains(tokenId), "NFT not listed");
+        require(listings[tokenId].seller == msg.sender, "Not the seller of the NFT");
+
+        delete listings[tokenId];
+        listedTokens.remove(tokenId);
+
+        emit NFTUnlisted(msg.sender, tokenId);
+    }
+
+    // Buy an NFT
+    function buyNFT(uint256 tokenId) external payable {
+        require(listedTokens.contains(tokenId), "NFT not listed");
+        Listing memory listing = listings[tokenId];
+        require(msg.value >= listing.price, "Insufficient funds");
+
+        // Transfer ownership of the NFT to buyer
+        IERC721(nftContract).safeTransferFrom(listing.seller, msg.sender, tokenId);
+
+        // Transfer payment to seller
+        payable(listing.seller).transfer(listing.price);
+
+        // Remove listing
+        delete listings[tokenId];
+        listedTokens.remove(tokenId);
+
+        emit NFTSold(listing.seller, msg.sender, tokenId, listing.price);
+    }
+
+    // Withdraw ETH from the contract (only owner)
+    function withdraw() external onlyOwner {
+        payable(owner()).transfer(address(this).balance);
+    }
+
+    // Receive function to accept ETH payments
+    receive() external payable {}
+
+    // ERC721 callback function (unused in this example)
+    function onERC721Received(address, address, uint256, bytes memory) external pure override returns (bytes4) {
+        return this.onERC721Received.selector;
+    }
+
+    // Get all listed token IDs
+    function getAllListedTokens() external view returns (uint256[] memory) {
+        uint256[] memory tokens = new uint256[](listedTokens.length());
+        for (uint256 i = 0; i < listedTokens.length(); i++) {
+            tokens[i] = listedTokens.at(i);
+        }
+        return tokens;
+    }
+}
